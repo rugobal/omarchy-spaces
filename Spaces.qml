@@ -634,6 +634,7 @@ Panel {
   property Item previewPill: null
   property bool previewWanted: false
   property string highlightAddress: ""
+  property var highlightAddresses: []
 
   readonly property bool previewOpen: previewWanted && previewWorkspaceId > 0 && !root.opened
     && root.cfg.previews && !!root.workspaceMap[previewWorkspaceId]
@@ -662,6 +663,7 @@ Panel {
     previewHideTimer.stop()
     root.previewWanted = false
     root.highlightAddress = ""
+    root.highlightAddresses = []
   }
 
   function placePreviewAnchor(animate) {
@@ -1217,6 +1219,7 @@ Panel {
                     onWheel: function(wheel) { root.scrollBy(wheel.angleDelta.y || wheel.angleDelta.x) }
                     onContainsMouseChanged: {
                       root.highlightAddress = containsMouse && appIcon.item ? appIcon.item.address : ""
+                      root.highlightAddresses = containsMouse && appIcon.item ? (appIcon.item.addresses || [appIcon.item.address]) : []
                       if (containsMouse && appIcon.item) {
                         var tip = appIcon.item.title || appIcon.info.name
                         if (appIcon.item.count > 1) tip = appIcon.info.name + " (" + appIcon.item.count + " windows)"
@@ -1432,7 +1435,7 @@ Panel {
           required property var modelData
           readonly property var rect: mini.rects[modelData] || null
           readonly property var win: root.windowByAddress(modelData)
-          readonly property bool highlighted: root.highlightAddress === modelData || thumbMouse.containsMouse
+          readonly property bool highlighted: root.highlightAddress === modelData || root.highlightAddresses.indexOf(modelData) !== -1 || thumbMouse.containsMouse
           readonly property real inset: Style.space(2)
 
           x: rect ? rect.x + inset : 0
