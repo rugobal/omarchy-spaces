@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Window
 import QtTest
 import Quickshell
+import Quickshell.Hyprland
 import "Model.js" as Model
 Window {
   visible: true
@@ -90,6 +91,7 @@ Window {
       appIcons()
       previousWindow()
       crossWorkspaceFocusHistory()
+      specialWorkspaceHistory()
       workspacePreviews()
     }
     function workspacePreviews() {
@@ -151,7 +153,7 @@ Window {
       console.log("PASS: opt-in current workspace icon previews, grouped highlights, live setting changes, and master switch")
     }
     function previousWindow() {
-      var current = String(widget.activeWindowAddress()).replace(/^0x/, "").toLowerCase()
+      var current = widget.backgroundWindowAddress()
       var other = widget.liveWindowAddresses().filter(function(address) { return address !== current })[0]
       if (!current || !other) {
         console.log("SKIP: need two live windows for the previous-window check")
@@ -175,7 +177,7 @@ Window {
       console.log("PASS: focused icon returns to previous live window; unfocused icon focuses its own window")
     }
     function crossWorkspaceFocusHistory() {
-      var current = Model.normalizeAddress(widget.activeWindowAddress())
+      var current = widget.backgroundWindowAddress()
       var others = widget.liveWindowAddresses().filter(function(address) { return address !== current })
       if (!current || others.length < 2) {
         console.log("SKIP: need three live windows for the intermediate-focus check")
@@ -219,6 +221,32 @@ Window {
         "A vanished target left history paused")
       widget.rememberFocusedWindow()
       console.log("PASS: intermediate workspace focus, newer clicks, normal focus, failed requests, and vanished targets")
+    }
+    function specialWorkspaceHistory() {
+      var special = Hyprland.toplevels.values.filter(function(window) {
+        return window.workspace && window.workspace.id < 0
+      }).map(function(window) { return Model.normalizeAddress(window.address) })
+      var current = widget.backgroundWindowAddress()
+      var live = widget.liveWindowAddresses()
+      var target = live.filter(function(address) { return address !== current })[0]
+      if (!special.length || live.indexOf(current) === -1 || !target) {
+        console.log("SKIP: need a special-workspace window and two regular windows for the overlay check")
+        return
+      }
+      widget.windowFocusHistory = [current]
+      sentBy(function() { widget.focusWindow(target) })
+      for (var address of special) {
+        check(live.indexOf(address) === -1, "Special workspace became a previous-window target")
+        widget.rememberFocusedWindow(address)
+        check(widget.pendingWindowFocus === target && widget.windowFocusHistory[0] === current,
+          "Restoring an overlay interrupted the background window focus request")
+      }
+      widget.rememberFocusedWindow(target)
+      check(widget.pendingWindowFocus === ""
+        && JSON.stringify(widget.windowFocusHistory) === JSON.stringify([target, current]),
+        "Background focus completion lost the regular window's return target")
+      widget.rememberFocusedWindow()
+      console.log("PASS: special workspaces stay out of history and preserve pending background focus")
     }
     function workspaceEdges() {
       var workspace = widget.workspaceIds.filter(function(id) { return id !== widget.currentWorkspaceId })[0]
