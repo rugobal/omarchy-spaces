@@ -1,13 +1,12 @@
 import QtQuick
-import QtQuick.Window
 import QtTest
 import Quickshell
 import Quickshell.Hyprland
 import "Model.js" as Model
-Window {
+FloatingWindow {
   visible: true
   // Grows with the widget so every pill stays inside the window, even on a long vertical bar.
-  width: Math.max(900, widget.implicitWidth); height: Math.max(100, widget.implicitHeight)
+  implicitWidth: Math.max(900, widget.implicitWidth); implicitHeight: Math.max(100, widget.implicitHeight)
   // Stands in for the bar; run() records commands instead of dispatching them.
   QtObject {
     id: fakeBar
@@ -93,6 +92,129 @@ Window {
       crossWorkspaceFocusHistory()
       specialWorkspaceHistory()
       workspacePreviews()
+      previewHandoff()
+    }
+    function previewHandoff() {
+      widget.applySetting({previews: true, previewActive: true, groupApps: true, previewLive: false})
+      wait(50)
+      var icons = collect(widget, function(item) {
+        return item.agentState !== undefined && !!item.item
+          && pillOf(item).workspace.windows.filter(function(window) { return window.floating }).length > 1
+          && pillOf(item).workspace.windows.some(function(window) {
+            return window.address === item.item.address && window.floating
+          })
+      }, [])
+      var single = icons.filter(function(icon) { return icon.item.count === 1 })[0]
+      var grouped = icons.filter(function(icon) {
+        return pillOf(icon).workspace.windows.filter(function(window) {
+          return window.floating && icon.item.addresses.indexOf(window.address) !== -1
+        }).length > 1
+      })[0]
+      if (!single && !grouped) {
+        console.log("SKIP: need floating windows for the preview handoff check")
+        return
+      }
+      for (var icon of [single, grouped].filter(function(item) { return !!item })) {
+        widget.hidePreview()
+        mouseMove(widget, widget.width - 1, widget.height + 20)
+        wait(50)
+        var p = icon.mapToItem(widget, icon.width / 2, icon.height / 2)
+        mouseMove(widget, p.x, p.y)
+        wait(450)
+        check(widget.previewOpen, "Floating window preview did not open: icon=" + icon.hovered
+          + ", pill=" + pillOf(icon).hovered + ", workspace=" + pillOf(icon).workspaceId
+          + ", preview=" + widget.previewWorkspaceId + ", wanted=" + widget.previewWanted)
+        var selected = icon.item.address
+        var group = JSON.stringify(icon.item.addresses)
+        fakeBar.commands = []
+        // Leave the icon through the gap before entering the popup.
+        mouseMove(widget, p.x, widget.height + 2)
+        check(widget.highlightAddress === selected && JSON.stringify(widget.highlightAddresses) === group,
+          "Leaving the app icon dropped its preview selection before the pointer reached the popup")
+
+        var card = null
+        for (var resource of widget.resources) {
+          if (resource.mapWidth !== undefined && resource.triggerMode === "hover") card = resource
+        }
+        check(card, "Missing workspace preview card")
+        var thumbs = []
+        for (var content of card.contentItem) collect(content, function(item) {
+          return item.rect !== undefined && item.highlighted !== undefined
+        }, thumbs)
+        var primary = thumbs.filter(function(thumb) { return thumb.modelData === selected })[0]
+        check(primary, "Missing selected thumbnail " + selected + ": "
+          + JSON.stringify(thumbs.map(function(thumb) { return thumb.modelData }))
+          + ", visible=" + card.visible + ", contents=" + card.contentItem.length)
+        var siblings = thumbs.filter(function(thumb) {
+          return thumb !== primary && thumb.rect.floating
+            && (icon.item.count === 1 || icon.item.addresses.indexOf(thumb.modelData) !== -1)
+        })
+        var sibling = siblings[siblings.length - 1]
+        check(sibling, "Need another floating thumbnail for the overlap check")
+        var rear = sibling
+        // Make the overlap deterministic while keeping the real delegates and hit targets.
+        for (var thumb of thumbs) thumb.visible = thumb === primary || thumb === sibling
+        primary.x = 10; primary.y = 10; primary.width = 100; primary.height = 80
+        sibling.x = 60; sibling.y = 10; sibling.width = 100; sibling.height = 80
+        check(primary.z > sibling.z, "Selected window is not above the overlapping thumbnail")
+        mouseMove(primary, 75, 40)
+        wait(250)
+        check(card.containsMouse && widget.previewOpen && widget.highlightAddress === selected,
+          "Selected thumbnail did not stay reachable after entering the preview")
+        check(fakeBar.commands.length === 0, "Hovering the preview changed actual window focus or stacking")
+        if (icon.item.count > 1) {
+          mouseMove(sibling, 90, 40)
+          wait(20)
+          check(widget.highlightAddress === sibling.modelData && sibling.z > primary.z,
+            "Hovering another window in the app group did not bring its thumbnail forward")
+          mouseMove(sibling, 25, 40)
+          wait(20)
+          check(widget.highlightAddress === sibling.modelData && sibling.z > primary.z,
+            "Moving into the grouped windows' overlap changed the selected window")
+          rear = primary
+          primary = sibling
+        }
+        selected = primary.modelData
+        mouseMove(primary.parent, 2, 2)
+        wait(20)
+        check(widget.highlightAddress === selected && primary.z > rear.z,
+          "Leaving a thumbnail dropped it behind another window")
+        mouseMove(primary, 25, 40)
+        var clicked = sentBy(function() { mouseClick(primary, 25, 40) })
+        check(clicked.indexOf("address:0x" + Model.normalizeAddress(selected)) !== -1,
+          "Preview click did not select the window that stayed in front")
+        check(!widget.previewOpen && widget.highlightAddress === "" && widget.highlightAddresses.length === 0,
+          "Closing the preview did not clear the retained selection")
+        console.log("PASS: icon-to-preview handoff, stable overlap hit target, and click for "
+          + (icon.item.count > 1 ? "grouped floating windows" : "a single floating window"))
+      }
+      if (!grouped) console.log("SKIP: need multiple floating windows of one app for grouped handoff")
+      icon = single || grouped
+      mouseMove(widget, widget.width - 1, widget.height + 20)
+      wait(250)
+      p = icon.mapToItem(widget, icon.width / 2, icon.height / 2)
+      mouseMove(widget, p.x, p.y)
+      wait(450)
+      var other = widget.workspaceIds.filter(function(id) {
+        return id !== pillOf(icon).workspaceId && widget.workspaceMap[id] && widget.workspaceMap[id].windows.length
+      })[0]
+      if (other !== undefined) {
+        check(widget.peek(other), "Could not open another workspace preview")
+        check(widget.highlightAddress === "" && widget.highlightAddresses.length === 0,
+          "Another workspace inherited the previous preview's selection")
+      }
+      widget.hidePreview()
+      mouseMove(widget, widget.width - 1, widget.height + 20)
+      wait(250)
+      mouseMove(widget, p.x, p.y)
+      wait(450)
+      check(widget.previewOpen && widget.highlightAddress === icon.item.address,
+        "Reopening a preview lost the icon's initial selection")
+      mouseMove(widget, p.x, widget.height + 2)
+      wait(250)
+      check(!widget.previewOpen && widget.highlightAddress === "" && widget.highlightAddresses.length === 0,
+        "Leaving the icon and preview did not close it and clear the selection")
+      console.log("PASS: workspace changes, reopening, and hover dismissal clear the selection at the right time")
     }
     function workspacePreviews() {
       var activePill = collect(widget, function(item) {
