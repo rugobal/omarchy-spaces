@@ -448,19 +448,20 @@ Panel {
       root.rememberFocusedWindow()
     }
     var target = "address:0x" + key
-    // Complete the focus and overlay restoration in one compositor callback,
-    // so an open scratchpad stays above the newly selected background window.
+    // Change the regular workspace directly while an overlay is open. Focusing
+    // the background window would close the overlay and start its exit animation.
     var expression = [
       "local w = assert(hl.get_window(" + JSON.stringify(target) + "))",
       "local m = w.monitor",
       "local s = m and m.active_special_workspace",
       "local a = hl.get_active_window()",
-      "hl.dispatch(hl.dsp.focus({ window = w }))",
+      "local background = s and not w.workspace.special",
+      "if background then m:set_workspace({ workspace = w.workspace })",
+      "else hl.dispatch(hl.dsp.focus({ window = w })) end",
       "hl.dispatch(hl.dsp.window.alter_zorder({ window = w, mode = \"top\" }))",
-      "if s and not w.workspace.special then",
-      "m:set_special_workspace({ workspace = s })",
+      "if background then",
       "if a and a.workspace == s then hl.dispatch(hl.dsp.focus({ window = a })) end",
-      // Restoring the overlay can coalesce the normal window's focus event.
+      // The background selection does not take keyboard focus from the overlay.
       "hl.dispatch(hl.dsp.event(" + JSON.stringify(root.moduleName + ":background:" + key) + "))",
       "end"
     ].join("; ")
@@ -523,8 +524,7 @@ Panel {
         root.setUrgent(event.data, true)
         break
       case "activewindowv2":
-        // A complete focus + scratchpad restore can arrive in one IPC read;
-        // retain the regular window even if activeToplevel already shows the overlay.
+        // Use the event's window even if activeToplevel has already changed.
         root.rememberFocusedWindow(event.data)
         root.hideHeldNumbers()
         root.setUrgent(event.data, false)
