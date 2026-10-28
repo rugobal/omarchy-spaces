@@ -111,6 +111,7 @@ Panel {
   property int lastWorkspaceId: -1
 
   property var windowFocusHistory: []
+  property string pendingWindowFocus: ""
 
   function liveWindowAddresses() {
     return Hyprland.toplevels.values.map(function(toplevel) {
@@ -118,9 +119,29 @@ Panel {
     })
   }
 
-  function rememberFocusedWindow() {
+  function rememberFocusedWindow(address) {
+    var current = Model.normalizeAddress(address === undefined ? root.activeWindowAddress() : address)
+    var open = root.liveWindowAddresses()
+    if (root.pendingWindowFocus) {
+      // Entering a workspace can focus its last window before the requested
+      // one. Keep the origin as "previous" until the requested focus arrives.
+      if (open.indexOf(root.pendingWindowFocus) !== -1 && current !== root.pendingWindowFocus) return
+      root.pendingWindowFocus = ""
+      windowFocusTimeout.stop()
+    }
     root.windowFocusHistory = Model.rememberWindowFocus(
-      root.windowFocusHistory, root.activeWindowAddress(), root.liveWindowAddresses())
+      root.windowFocusHistory, current, open)
+  }
+
+  Timer {
+    id: windowFocusTimeout
+    // Recovery only: a failed dispatch must not leave history paused. A
+    // successful focus clears the request immediately, without a delay.
+    interval: 1000
+    onTriggered: {
+      root.pendingWindowFocus = ""
+      root.rememberFocusedWindow()
+    }
   }
 
   onCurrentWorkspaceIdChanged: {
@@ -393,6 +414,14 @@ Panel {
   }
 
   function focusWindow(address) {
+    root.rememberFocusedWindow()
+    var key = Model.normalizeAddress(address)
+    root.pendingWindowFocus = key === Model.normalizeAddress(root.activeWindowAddress()) ? "" : key
+    if (root.pendingWindowFocus) windowFocusTimeout.restart()
+    else {
+      windowFocusTimeout.stop()
+      root.rememberFocusedWindow()
+    }
     var target = "address:0x" + String(address).replace(/^0x/, "")
     run("(hyprctl dispatch " + Util.shellQuote("hl.dsp.focus({ window = \"" + target + "\" })")
       + " >/dev/null 2>&1 || hyprctl dispatch focuswindow " + Util.shellQuote(target) + ")"
