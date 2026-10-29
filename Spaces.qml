@@ -487,6 +487,7 @@ Panel {
   }
 
   function activateItem(item) {
+    root.hidePreview()
     root.rememberFocusedWindow()
     var target = Model.iconClickTarget(item, root.cfg.activeIconClick,
       root.windowFocusHistory, root.liveWindowAddresses())
@@ -763,6 +764,7 @@ Panel {
   function hidePreview() {
     previewShowTimer.stop()
     previewHideTimer.stop()
+    peekTimer.stop()
     root.previewWanted = false
     root.clearPreviewHighlight()
   }
